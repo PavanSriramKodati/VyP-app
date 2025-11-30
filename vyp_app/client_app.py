@@ -3,6 +3,7 @@
 import torch
 from flwr.app import ArrayRecord, Context, Message, MetricRecord, RecordDict
 from flwr.clientapp import ClientApp
+from sklearn.metrics import precision_recall_fscore_support
 
 from vyp_app.task import Net, load_data
 from vyp_app.task import test as test_fn

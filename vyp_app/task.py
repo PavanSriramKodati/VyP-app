@@ -7,6 +7,7 @@ import pandas as pd
 import numpy as np
 from torch.utils.data import DataLoader, TensorDataset
 from sklearn.preprocessing import StandardScaler, LabelEncoder
+from sklearn.metrics import classification_report, confusion_matrix
 
 # ---------------- CONFIGURATION ---------------- #
 # 1. Update this number after running once if needed
@@ -25,7 +26,8 @@ class Net(nn.Module):
         super(Net, self).__init__()
         self.fc1 = nn.Linear(INPUT_SIZE, 64)
         self.fc2 = nn.Linear(64, 32)
-        self.fc3 = nn.Linear(32, 2)
+        # Output layer is 3 (DoS, Normal, MITM)
+        self.fc3 = nn.Linear(32, 3) 
 
     def forward(self, x):
         x = F.relu(self.fc1(x))
@@ -35,8 +37,13 @@ class Net(nn.Module):
 def get_clean_features_and_labels(df):
     """Helper function to clean a specific dataframe."""
     
-    # 1. Separate Y
-    y = df[LABEL_COLUMN].values
+    # --- FIX START ---
+    # 0. Drop rows where the Label is missing (NaN)
+    df = df.dropna(subset=[LABEL_COLUMN])
+
+    # 1. Separate Y and FORCE STRING TYPE (Fixes float vs str error)
+    y = df[LABEL_COLUMN].astype(str).values
+    # --- FIX END ---
     
     # 2. Drop Label from X
     df_features = df.drop(columns=[LABEL_COLUMN])
@@ -47,7 +54,7 @@ def get_clean_features_and_labels(df):
         if matching_cols:
             df_features = df_features.drop(columns=matching_cols)
 
-    # 4. Encode Categorical Columns (Protocol, etc.)
+    # 4. Encode Categorical Columns
     for col in df_features.columns:
         if df_features[col].dtype == 'object':
             le = LabelEncoder()
@@ -70,13 +77,14 @@ def load_data(partition_id: int, num_partitions: int):
         raise FileNotFoundError(f"Missing file: {e}")
 
     # --- 2. CLEAN BOTH DATASETS ---
-    # We clean them separately but using the same logic
     X_train_df, y_train_raw = get_clean_features_and_labels(df_train)
     X_test_df, y_test_raw = get_clean_features_and_labels(df_test)
+    
+    print("***********")
+    print(f"Shape of X_train_df: {X_train_df.shape}")
+    print(f"Shape of y_train_raw: {y_train_raw.shape}")   
 
     # --- 3. ALIGN COLUMNS ---
-    # Critical: Ensure Train and Test have exact same columns in same order
-    # If Test has extra columns, drop them. If missing, fill 0.
     X_train_df, X_test_df = X_train_df.align(X_test_df, join='inner', axis=1)
     
     X_train = X_train_df.values
@@ -89,18 +97,19 @@ def load_data(partition_id: int, num_partitions: int):
     print(f"----------------------------------------------------")
 
     # --- 4. ENCODE LABELS ---
-    # We fit the encoder on combined labels to ensure 0 and 1 mean the same thing in both
     le_y = LabelEncoder()
     # Fit on all possible labels to avoid errors if one file misses a class
     all_labels = np.unique(np.concatenate((y_train_raw, y_test_raw)))
     le_y.fit(all_labels)
     
+    print(f"**************************************************")
+    print(f"CLASS MAPPING: {dict(zip(le_y.transform(le_y.classes_), le_y.classes_))}")
+    print(f"**************************************************")
+    
     y_train = le_y.transform(y_train_raw)
     y_test = le_y.transform(y_test_raw)
 
     # --- 5. SCALE ---
-    # IMPORTANT: Fit scaler ONLY on Training data, then transform Test data
-    # This prevents "looking into the future" (Data Leakage)
     scaler = StandardScaler()
     X_train = scaler.fit_transform(X_train)
     X_test = scaler.transform(X_test)
@@ -115,8 +124,6 @@ def load_data(partition_id: int, num_partitions: int):
         torch.tensor(y_test, dtype=torch.long)
     )
 
-    # Return Loaders
-    # Note: We use the external test set as 'valloader' for the simulation
     trainloader = DataLoader(train_dataset, batch_size=32, shuffle=True)
     valloader = DataLoader(test_dataset, batch_size=32)
 
@@ -151,6 +158,9 @@ def test(net, testloader, device):
     criterion = torch.nn.CrossEntropyLoss()
     correct, loss = 0, 0.0
     
+    y_true = []
+    y_pred = []
+    
     with torch.no_grad():
         for batch in testloader:
             features, labels = batch[0].to(device), batch[1].to(device)
@@ -159,6 +169,18 @@ def test(net, testloader, device):
             _, predicted = torch.max(outputs.data, 1)
             correct += (predicted == labels).sum().item()
             
+            y_true.extend(labels.cpu().numpy())
+            y_pred.extend(predicted.cpu().numpy())
+            
     accuracy = correct / len(testloader.dataset)
     loss = loss / len(testloader)
+    
+    # --- PRINT THE REPORT ---
+    print("\n" + "="*40)
+    print(f"CONFUSION MATRIX (Check Class Mapping above for labels):")
+    print(confusion_matrix(y_true, y_pred))
+    print("\nDETAILED REPORT:")
+    print(classification_report(y_true, y_pred))
+    print("="*40 + "\n")
+
     return loss, accuracy
