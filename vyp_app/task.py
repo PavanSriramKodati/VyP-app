@@ -13,6 +13,7 @@ INPUT_SIZE = 79
 LABEL_COLUMN = "label" 
 DROP_COLS = ['src_ip', 'dst_ip', 'timestamp']
 TEST_FILE = "test.csv"
+PRINTED_DISTRIBUTIONS = set()
 
 # ----------------------------  MULTILAYER PERCEPTRON ----------------------------
 # Set up MLP with 2 hidden layers
@@ -24,8 +25,8 @@ class Net(nn.Module):
         # Layer 2: 32 neurons, reLU activation
         self.fc2 = nn.Linear(64, 32)
         # Output layer
-        # 3 outputs: DoS, MITM, Normal
-        self.fc3 = nn.Linear(32, 3) 
+        # 7 outputs
+        self.fc3 = nn.Linear(32, 7) 
 
     # Apply 3 layers to return raw scores
     def forward(self, x):
@@ -56,59 +57,95 @@ def get_clean_features_and_labels(df):
             le = LabelEncoder()
             df_features[col] = le.fit_transform(df_features[col].astype(str))
     
-    print("-" * 50)
-    print("First 10 rows of df_features:")
-    print(df_features.head())
+    # print(f"\n{'-' * 50}")
+    # print("First 5 rows of df_features:")
+    # print(df_features.head())
             
     return df_features, y
 
 # ----------------------------  LOAD TRAINING & TESTING DATA ----------------------------
 def load_data(partition_id: int, num_partitions: int, batch_size: int = 32):
-    """
-    For each client (partition_id), load its CSV (client_{id}.csv),
-    then do an 80/20 train/validation split on that client's data.
-    """
+
     train_file = f"client_{partition_id}.csv"
-    print(f"Client {partition_id}: Loading data from {train_file}...")
+    print(f"\n{'=' * 100}\n")
+    print(f"!!!!!!!!!!!!!!!!!!!!! Client {partition_id}: Loading data from {train_file} !!!!!!!!!!!!!!!!!!!!!")
 
     try:
         df_train = pd.read_csv(train_file)
     except FileNotFoundError as e:
         raise FileNotFoundError(f"Missing file: {e}")
 
-    # Clean data: drop label & unwanted cols, encode categoricals
+    # Clean data
     X_df, y_raw = get_clean_features_and_labels(df_train)
-
-    print(f"\n{'-' * 50}")
-    print(f"Shape of X_df: {X_df.shape}")
-    print(f"Shape of y_raw: {y_raw.shape}")
 
     # Convert DataFrame to NumPy
     X = X_df.values
 
-    # 80/20 split of this client's data
+    # 80/20 split of client's data
     X_train, X_val, y_train_raw, y_val_raw = train_test_split(
         X,
         y_raw,
         test_size=0.2,
         random_state=42,
-        stratify=y_raw,  # keep class distribution similar
+        stratify=y_raw,
     )
+    
+    # def print_dist(name, y):
+    #     classes, counts = np.unique(y, return_counts=True)
+    #     print(f"\n{'*' * 50}")
+    #     print(f"\n[Client {partition_id}] {name} class distribution:")
+    #     for c, n in zip(classes, counts):
+    #         print(f"  class {c}: {n} samples")
 
-    print(f"\n{'-' * 50}")
-    print(f"CLIENT {partition_id} FEATURE COUNT: {X_train.shape[1]}")
-    print(f"Train size: {X_train.shape[0]}, Val size: {X_val.shape[0]}")
+    # print_dist("TRAIN", y_train_raw)
+    # print_dist("TEST", y_val_raw)
 
-    # Encode labels to integers (e.g., DoS / Normal / MITM -> 0 / 1 / 2)
+    # print(f"\n{'-' * 50}")
+    # print(f"CLIENT {partition_id} FEATURE COUNT: {X_train.shape[1]}")
+    # print(f"Train size: {X_train.shape[0]}, Val size: {X_val.shape[0]}")
+
+    # # Encode labels to integers
+    # le_y = LabelEncoder()
+    # all_labels = np.unique(y_raw)
+    # le_y.fit(all_labels)
+
+    # print(
+    #     f"\n{'-' * 50}\n"
+    #     f"Encoded labels (client {partition_id}): "
+    #     f"{dict(zip(le_y.transform(le_y.classes_), le_y.classes_))}"
+    # )
+
+    def print_dist(name, y):
+        classes, counts = np.unique(y, return_counts=True)
+        print(f"\n{'*' * 50}")
+        print(f"\n[Client {partition_id}] {name} class distribution:")
+        for c, n in zip(classes, counts):
+            print(f"  class {c}: {n} samples")
+
+    # Print distribution once per client
+    global PRINTED_DISTRIBUTIONS
+    if partition_id not in PRINTED_DISTRIBUTIONS:
+        print_dist("TRAIN", y_train_raw)
+        print_dist("TEST", y_val_raw)
+
+        print(f"\n{'*' * 50}\n")
+        print(f"[Client {partition_id}] Feature count: {X_train.shape[1]}")
+        print(f"Train size: {X_train.shape[0]}, Val size: {X_val.shape[0]}")
+
+        PRINTED_DISTRIBUTIONS.add(partition_id)
+
+    # Encode labels to integers
     le_y = LabelEncoder()
     all_labels = np.unique(y_raw)
     le_y.fit(all_labels)
 
-    print(
-        f"\n{'-' * 50}\n"
-        f"Encoded labels (client {partition_id}): "
-        f"{dict(zip(le_y.transform(le_y.classes_), le_y.classes_))}"
-    )
+    # Print out encoded labels
+    if partition_id in PRINTED_DISTRIBUTIONS:
+        label_map = dict(zip(le_y.transform(le_y.classes_), le_y.classes_))
+
+        print(f"\n[Client {partition_id}] Encoded labels:")
+        for idx, name in label_map.items():
+            print(f"  {idx}: {name}")
 
     y_train = le_y.transform(y_train_raw)
     y_val = le_y.transform(y_val_raw)
@@ -135,76 +172,9 @@ def load_data(partition_id: int, num_partitions: int, batch_size: int = 32):
 
     return trainloader, valloader
 
-"""
-def load_data(partition_id: int, num_partitions: int):
-    
-    train_file = f"client_{partition_id}.csv" 
-    print(f"Client {partition_id}: Loading TRAIN data from {train_file}...")
-    print(f"Client {partition_id}: Loading TEST data from {TEST_FILE}...")
-    
-    try:
-        df_train = pd.read_csv(train_file)
-        df_test = pd.read_csv(TEST_FILE)
-    except FileNotFoundError as e:
-        raise FileNotFoundError(f"Missing file: {e}")
-
-    # Clean data
-    X_train_df, y_train_raw = get_clean_features_and_labels(df_train)
-    X_test_df, y_test_raw = get_clean_features_and_labels(df_test)
-    
-    print("-" * 50)
-    print(f"Shape of X_train_df: {X_train_df.shape}")
-    print(f"Shape of y_train_raw: {y_train_raw.shape}")   
-
-    # Convert each DataFrame into NumPy array
-    X_train_df, X_test_df = X_train_df.align(X_test_df, join='inner', axis=1)
-    X_train = X_train_df.values
-    X_test = X_test_df.values
-
-    print("-" * 50)
-    print(f"CLIENT {partition_id} FEATURE COUNT: {X_train.shape[1]}")
-    print("-" * 50)
-
-    # Encode label to encode DoS, Normal, NMITM to 0, 1, 2
-    le_y = LabelEncoder()
-
-    # Fit on all unique labels
-    all_labels = np.unique(np.concatenate((y_train_raw, y_test_raw)))
-    le_y.fit(all_labels)
-    
-    print("-" * 50)
-    print(f"Encoded labels: {dict(zip(le_y.transform(le_y.classes_), le_y.classes_))}")
-    print("-" * 50)
-    
-    y_train = le_y.transform(y_train_raw)
-    y_test = le_y.transform(y_test_raw)
-
-    # Scale
-    scaler = StandardScaler()
-    X_train = scaler.fit_transform(X_train)
-    X_test = scaler.transform(X_test)
-
-    # Convert NumPy arrays to to PyTorch dataset objects
-    train_dataset = TensorDataset(
-        torch.tensor(X_train, dtype=torch.float32), 
-        torch.tensor(y_train, dtype=torch.long)
-    )
-
-    test_dataset = TensorDataset(
-        torch.tensor(X_test, dtype=torch.float32), 
-        torch.tensor(y_test, dtype=torch.long)
-    )
-
-    # Feed PyTorch dataset objects to DataLoader
-    trainloader = DataLoader(train_dataset, batch_size=32, shuffle=True)
-    valloader = DataLoader(test_dataset, batch_size=32)
-
-    return trainloader, valloader
-"""
-
-# ----------------------------  GLOBAL TEST DATA (test.csv) ---------------------------- #
+# ----------------------------  GLOBAL TEST DATA ----------------------------
 def load_global_testloader(batch_size: int = 32):
-    print(f"\n{'-' * 50}")
+    print(f"\n{'*' * 90}")
     print(f"Loading GLOBAL TEST data from {TEST_FILE}...")
 
     try:
@@ -319,7 +289,7 @@ def test(net, testloader, device):
     accuracy = correct / len(testloader.dataset)
     loss = loss / len(testloader)
     
-    # # ---------------print(f"\n{'-' * 50}")-------------  PRINT RESULT ----------------------------
+    # ----------------------------  PRINT GLOBAL RESULT ---------------------------- 
     print(f"\n{'-' * 50}")
     print("CONFUSION MATRIX:")
     print(confusion_matrix(y_true, y_pred))
