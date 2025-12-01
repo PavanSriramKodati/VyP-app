@@ -1,16 +1,14 @@
-"""VyP-app: A Flower / PyTorch app."""
-
 from flwr.app import ArrayRecord, ConfigRecord, Context
 from flwr.serverapp import Grid, ServerApp
 from flwr.serverapp.strategy import FedAvg
 from vyp_app.task import Net
+import torch
 
-# Create ServerApp
 app = ServerApp()
 
-# --- CUSTOM AGGREGATION FUNCTION ---
+"""
+# ----------------------------  AGGREGRATION FUNCTION ----------------------------
 def weighted_average(metrics):
-    """Aggregates metrics from multiple clients."""
     # Multiply metric by number of examples on that client
     accuracies = [num_examples * m["eval_acc"] for num_examples, m in metrics]
     recalls = [num_examples * m["eval_recall"] for num_examples, m in metrics]
@@ -24,7 +22,9 @@ def weighted_average(metrics):
         "recall": sum(recalls) / total_examples,
         "f1_score": sum(f1s) / total_examples,
     }
+"""
 
+# ----------------------------  AGGREGRATION FUNCTION ----------------------------
 @app.main()
 def main(grid: Grid, context: Context) -> None:
     fraction_train: float = context.run_config["fraction-train"]
@@ -36,8 +36,8 @@ def main(grid: Grid, context: Context) -> None:
 
     # Initialize FedAvg strategy with the custom aggregation function
     strategy = FedAvg(
-        fraction_train=fraction_train,
-        evaluate_metrics_aggregation_fn=weighted_average, # <--- KEY CHANGE
+        fraction_train=fraction_train
+        # evaluate_metrics_aggregation_fn=weighted_average
     )
 
     result = strategy.start(
@@ -47,7 +47,8 @@ def main(grid: Grid, context: Context) -> None:
         num_rounds=num_rounds,
     )
 
-    print("\nSaving final model to disk...")
     state_dict = result.arrays.to_torch_state_dict()
-    import torch
     torch.save(state_dict, "final_model.pt")
+    
+    print(f"\n{'-' * 50}")
+    print("\Final model saved to disk.")
