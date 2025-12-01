@@ -51,4 +51,4 @@ def main(grid: Grid, context: Context) -> None:
     torch.save(state_dict, "final_model.pt")
     
     print(f"\n{'-' * 50}")
-    print("\Final model saved to disk.")
+    print("Final model saved to disk.")
