@@ -7,6 +7,7 @@ from torch.utils.data import DataLoader, TensorDataset
 from sklearn.preprocessing import StandardScaler, LabelEncoder
 from sklearn.metrics import classification_report, confusion_matrix
 from sklearn.model_selection import train_test_split
+import matplotlib.pyplot as plt
 
 # ---------------------------- CONFIGURATION ----------------------------
 INPUT_SIZE = 79  
@@ -90,30 +91,19 @@ def load_data(partition_id: int, num_partitions: int, batch_size: int = 32):
         stratify=y_raw,
     )
     
-    # def print_dist(name, y):
-    #     classes, counts = np.unique(y, return_counts=True)
-    #     print(f"\n{'*' * 50}")
-    #     print(f"\n[Client {partition_id}] {name} class distribution:")
-    #     for c, n in zip(classes, counts):
-    #         print(f"  class {c}: {n} samples")
+    # Plot class distributions
+    plot_class_pie(
+        y_train_raw,
+        title=f"Client {partition_id} - TRAIN Class Distribution",
+        filename=f"client_{partition_id}_train_pie.png",
+    )
 
-    # print_dist("TRAIN", y_train_raw)
-    # print_dist("TEST", y_val_raw)
+    plot_class_pie(
+        y_val_raw,
+        title=f"Client {partition_id} - TEST Class Distribution",
+        filename=f"client_{partition_id}_test_pie.png",
+    )
 
-    # print(f"\n{'-' * 50}")
-    # print(f"CLIENT {partition_id} FEATURE COUNT: {X_train.shape[1]}")
-    # print(f"Train size: {X_train.shape[0]}, Val size: {X_val.shape[0]}")
-
-    # # Encode labels to integers
-    # le_y = LabelEncoder()
-    # all_labels = np.unique(y_raw)
-    # le_y.fit(all_labels)
-
-    # print(
-    #     f"\n{'-' * 50}\n"
-    #     f"Encoded labels (client {partition_id}): "
-    #     f"{dict(zip(le_y.transform(le_y.classes_), le_y.classes_))}"
-    # )
 
     def print_dist(name, y):
         classes, counts = np.unique(y, return_counts=True)
@@ -300,3 +290,19 @@ def test(net, testloader, device):
 
     print("-" * 50)
     return loss, accuracy
+
+# Plot bar chart for distribution
+def plot_class_pie(y, title, filename):
+    classes, counts = np.unique(y, return_counts=True)
+
+    fig, ax = plt.subplots()
+    ax.pie(
+        counts,
+        labels=classes,
+        autopct="%1.1f%%",
+        startangle=90,
+    )
+    ax.set_title(title)
+    plt.tight_layout()
+    plt.savefig(filename, dpi=200)
+    plt.close(fig)
